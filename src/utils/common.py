@@ -23,16 +23,37 @@ def retrieve_user_id(auth: Any) -> str:  # pylint: disable=unused-argument
     return "user_id_placeholder"
 
 
-async def _register_mcp_toolgroups(
-    client, mcp_servers, logger: Logger, is_async: bool = False
+async def register_mcp_servers_async(
+    logger: Logger, configuration: Configuration
 ) -> None:
-    """Common logic for registering MCP toolgroups, works for both sync and async clients."""
-    # Get registered tools - handle both sync and async clients
-    if is_async:
-        registered_tools = await client.tools.list()
-    else:
-        registered_tools = client.tools.list()
+    """Register Model Context Protocol (MCP) servers with the LlamaStack client (async)."""
+    if configuration.llama_stack.use_as_library_client:
+        # Library client - use async interface
+        # config.py validation ensures library_client_config_path is not None when use_as_library_client is True
+        config_path = cast(str, configuration.llama_stack.library_client_config_path)
+        client = LlamaStackAsLibraryClient(config_path)
+        await client.async_client.initialize()
 
+        await _register_mcp_toolgroups_async(
+            client.async_client, configuration.mcp_servers, logger
+        )
+    else:
+        # Service client - use sync interface
+        register_mcp_servers(logger, configuration)
+
+
+def register_mcp_servers(logger: Logger, configuration: Configuration) -> None:
+    """Register Model Context Protocol (MCP) servers with the LlamaStack client (sync)."""
+    # Service client - use sync interface
+    client = get_llama_stack_client(configuration.llama_stack)
+
+    _register_mcp_toolgroups_sync(client, configuration.mcp_servers, logger)
+
+
+async def _register_mcp_toolgroups_async(client, mcp_servers, logger: Logger) -> None:
+    """Async logic for registering MCP toolgroups."""
+    # Get registered tools
+    registered_tools = await client.tools.list()
     registered_toolgroups = [tool.toolgroup_id for tool in registered_tools]
     logger.debug("Registered toolgroups: %s", set(registered_toolgroups))
 
@@ -47,32 +68,27 @@ async def _register_mcp_toolgroups(
                 "mcp_endpoint": {"uri": mcp.url},
             }
 
-            if is_async:
-                await client.toolgroups.register(**registration_params)
-            else:
-                client.toolgroups.register(**registration_params)
-
+            await client.toolgroups.register(**registration_params)
             logger.debug("MCP server %s registered successfully", mcp.name)
 
 
-async def register_mcp_servers_async(
-    logger: Logger, configuration: Configuration
-) -> None:
-    """Register Model Context Protocol (MCP) servers with the LlamaStack client."""
-    if configuration.llama_stack.use_as_library_client:
-        # Library client - use async interface
-        # config.py validation ensures library_client_config_path is not None when use_as_library_client is True
-        config_path = cast(str, configuration.llama_stack.library_client_config_path)
-        client = LlamaStackAsLibraryClient(config_path)
-        await client.async_client.initialize()
+def _register_mcp_toolgroups_sync(client, mcp_servers, logger: Logger) -> None:
+    """Sync logic for registering MCP toolgroups."""
+    # Get registered tools
+    registered_tools = client.tools.list()
+    registered_toolgroups = [tool.toolgroup_id for tool in registered_tools]
+    logger.debug("Registered toolgroups: %s", set(registered_toolgroups))
 
-        await _register_mcp_toolgroups(
-            client.async_client, configuration.mcp_servers, logger, is_async=True
-        )
-    else:
-        # Service client - use sync interface
-        client = get_llama_stack_client(configuration.llama_stack)
+    # Register toolgroups for MCP servers if not already registered
+    for mcp in mcp_servers:
+        if mcp.name not in registered_toolgroups:
+            logger.debug("Registering MCP server: %s, %s", mcp.name, mcp.url)
 
-        await _register_mcp_toolgroups(
-            client, configuration.mcp_servers, logger, is_async=False
-        )
+            registration_params = {
+                "toolgroup_id": mcp.name,
+                "provider_id": mcp.provider_id,
+                "mcp_endpoint": {"uri": mcp.url},
+            }
+
+            client.toolgroups.register(**registration_params)
+            logger.debug("MCP server %s registered successfully", mcp.name)

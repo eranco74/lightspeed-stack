@@ -1,9 +1,14 @@
 """Test module for utils/common.py."""
 
-from unittest.mock import Mock
+import pytest
+from unittest.mock import Mock, AsyncMock
 from logging import Logger
 
-from utils.common import retrieve_user_id, register_mcp_servers_async
+from utils.common import (
+    retrieve_user_id,
+    register_mcp_servers,
+    register_mcp_servers_async,
+)
 from models.config import (
     Configuration,
     ServiceConfiguration,
@@ -222,3 +227,57 @@ def test_register_mcp_servers_with_custom_provider(mocker):
         provider_id="my-custom-provider",
         mcp_endpoint={"uri": "https://custom.example.com/mcp"},
     )
+
+
+@pytest.mark.asyncio
+async def test_register_mcp_servers_async_with_library_client(mocker):
+    """Test register_mcp_servers_async with library client configuration."""
+    # Mock the logger
+    mock_logger = Mock(spec=Logger)
+
+    # Mock the LlamaStackAsLibraryClient
+    mock_library_client = Mock()
+    mock_async_client = AsyncMock()
+    mock_async_client.initialize = AsyncMock()
+    mock_library_client.async_client = mock_async_client
+
+    # Mock tools.list to return empty list
+    mock_tool = Mock()
+    mock_tool.toolgroup_id = "existing-tool"
+    mock_async_client.tools.list = AsyncMock(return_value=[mock_tool])
+    mock_async_client.toolgroups.register = AsyncMock()
+
+    mocker.patch(
+        "utils.common.LlamaStackAsLibraryClient", return_value=mock_library_client
+    )
+
+    # Create configuration with library client enabled
+    mcp_server = ModelContextProtocolServer(
+        name="test-server", url="http://localhost:8080"
+    )
+    config = Configuration(
+        name="test",
+        service=ServiceConfiguration(),
+        llama_stack=LLamaStackConfiguration(
+            use_as_library_client=True,
+            library_client_config_path="/path/to/config.yaml",
+        ),
+        user_data_collection=UserDataCollection(feedback_disabled=True),
+        mcp_servers=[mcp_server],
+    )
+
+    # Call the async function
+    await register_mcp_servers_async(mock_logger, config)
+
+    # Verify initialization was called
+    mock_async_client.initialize.assert_called_once()
+    # Verify tools.list was called
+    mock_async_client.tools.list.assert_called_once()
+    # Verify toolgroups.register was called for the new server
+    mock_async_client.toolgroups.register.assert_called_once_with(
+        toolgroup_id="test-server",
+        provider_id="model-context-protocol",
+        mcp_endpoint={"uri": "http://localhost:8080"},
+    )
+
+
