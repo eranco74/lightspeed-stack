@@ -3,7 +3,7 @@
 from unittest.mock import Mock
 from logging import Logger
 
-from utils.common import retrieve_user_id, register_mcp_servers
+from utils.common import retrieve_user_id, register_mcp_servers_async
 from models.config import (
     Configuration,
     ServiceConfiguration,
