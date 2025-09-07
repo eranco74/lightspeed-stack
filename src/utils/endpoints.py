@@ -4,7 +4,7 @@ from contextlib import suppress
 import logging
 from fastapi import HTTPException, status
 from llama_stack_client._client import AsyncLlamaStackClient
-from llama_stack_client.lib.agents.agent import AsyncAgent
+from llama_stack_client.lib.agents.agent import AsyncReActAgent
 
 import constants
 from models.requests import QueryRequest
@@ -102,7 +102,7 @@ async def get_agent(
             existing_agent_id = agent_response.agent_id
 
     logger.debug("Creating new agent")
-    agent = AsyncAgent(
+    agent = AsyncReActAgent(
         client,  # type: ignore[arg-type]
         model=model_id,
         instructions=system_prompt,
