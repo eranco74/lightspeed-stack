@@ -455,7 +455,7 @@ async def retrieve_response(  # pylint: disable=too-many-locals,too-many-branche
         query_request.conversation_id,
         query_request.no_tools or False,
     )
-
+    
     logger.debug("Conversation ID: %s, session ID: %s", conversation_id, session_id)
     # bypass tools and MCP servers if no_tools is True
     if query_request.no_tools:

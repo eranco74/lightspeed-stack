@@ -5,11 +5,207 @@ from enum import Enum
 
 from pydantic import BaseModel, model_validator, field_validator, Field
 from llama_stack_client.types.agents.turn_create_params import Document
+from llama_stack_client.types import UserMessage, SystemMessage, CompletionMessage
+from llama_stack.apis.inference import StopReason
 
 from log import get_logger
 from utils import suid
 
 logger = get_logger(__name__)
+
+
+class ChatMessage(BaseModel):
+    """Model representing a single message in a conversation context.
+
+    Attributes:
+        role: The role of the message sender (user, system, or assistant).
+        content: The content of the message.
+    """
+
+    role: str = Field(
+        description="The role of the message sender",
+        examples=["user", "system", "assistant"],
+    )
+    content: str = Field(
+        description="The content of the message",
+        examples=[
+            "What is Kubernetes?",
+            "You are a helpful assistant",
+            "Kubernetes is...",
+        ],
+    )
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, value: str) -> str:
+        """Validate that role is one of the allowed values."""
+        allowed_roles = {"user", "system", "assistant"}
+        if value not in allowed_roles:
+            raise ValueError(f"Role must be one of {allowed_roles}, got: {value}")
+        return value
+
+    model_config = {
+        "extra": "forbid",
+        "json_schema_extra": {
+            "examples": [
+                {"role": "user", "content": "What is Kubernetes?"},
+                {"role": "system", "content": "You are a helpful assistant."},
+                {
+                    "role": "assistant",
+                    "content": "Kubernetes is a container orchestration platform.",
+                },
+            ]
+        },
+    }
+
+
+class ChatRequest(BaseModel):
+    """Model representing a request for the chat endpoint.
+
+    Attributes:
+        query: The query string.
+        conversation_context: List of previous messages in the conversation.
+        provider: The optional provider.
+        model: The optional model.
+        system_prompt: The optional system prompt.
+        attachments: The optional attachments.
+        no_tools: Whether to bypass all tools and MCP servers (default: False).
+
+    Example:
+        ```python
+        chat_request = ChatRequest(
+            query="What is Docker?",
+            conversation_context=[
+                {"role": "user", "content": "What is Kubernetes?"},
+                {"role": "assistant", "content": "Kubernetes is a container orchestration platform."}
+            ]
+        )
+        ```
+    """
+
+    query: str = Field(
+        description="The query string",
+        examples=["What is Docker?"],
+    )
+
+    conversation_context: list[ChatMessage] = Field(
+        default_factory=list,
+        description="List of previous messages in the conversation",
+        examples=[
+            [
+                {"role": "user", "content": "What is Kubernetes?"},
+                {
+                    "role": "assistant",
+                    "content": "Kubernetes is a container orchestration platform.",
+                },
+            ]
+        ],
+    )
+
+    provider: Optional[str] = Field(
+        None,
+        description="The optional provider",
+        examples=["openai", "watsonx"],
+    )
+
+    model: Optional[str] = Field(
+        None,
+        description="The optional model",
+        examples=["gpt4mini"],
+    )
+
+    system_prompt: Optional[str] = Field(
+        None,
+        description="The optional system prompt.",
+        examples=["You are OpenShift assistant.", "You are Ansible assistant."],
+    )
+
+    attachments: Optional[list["Attachment"]] = Field(
+        None,
+        description="The optional list of attachments.",
+        examples=[
+            {
+                "attachment_type": "log",
+                "content_type": "text/plain",
+                "content": "this is attachment",
+            },
+        ],
+    )
+
+    no_tools: Optional[bool] = Field(
+        False,
+        description="Whether to bypass all tools and MCP servers",
+        examples=[True, False],
+    )
+
+    model_config = {
+        "extra": "forbid",
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "query": "What is Docker?",
+                    "conversation_context": [
+                        {"role": "user", "content": "What is Kubernetes?"},
+                        {
+                            "role": "assistant",
+                            "content": "Kubernetes is a container orchestration platform.",
+                        },
+                    ],
+                    "provider": "openai",
+                    "model": "model-name",
+                    "system_prompt": "You are a helpful assistant",
+                    "no_tools": False,
+                    "attachments": [
+                        {
+                            "attachment_type": "log",
+                            "content_type": "text/plain",
+                            "content": "this is attachment",
+                        }
+                    ],
+                }
+            ]
+        },
+    }
+
+    @model_validator(mode="after")
+    def validate_provider_and_model(self) -> Self:
+        """Perform validation on the provider and model."""
+        if self.model and not self.provider:
+            raise ValueError("Provider must be specified if model is specified")
+        if self.provider and not self.model:
+            raise ValueError("Model must be specified if provider is specified")
+        return self
+
+    def get_documents(self) -> list[Document]:
+        """Return the list of documents from the attachments."""
+        if not self.attachments:
+            return []
+        return [
+            Document(content=att.content, mime_type=att.content_type)
+            for att in self.attachments  # pylint: disable=not-an-iterable
+        ]
+
+    def get_messages(self) -> list[UserMessage | SystemMessage | CompletionMessage]:
+        """Convert conversation context and query to llama stack message format."""
+        messages = []
+
+        # Convert conversation context messages
+        for msg in self.conversation_context:
+            if msg.role == "user":
+                messages.append(UserMessage(role="user", content=msg.content))
+            elif msg.role == "system":
+                messages.append(SystemMessage(role="system", content=msg.content))
+            elif msg.role == "assistant":
+                messages.append(
+                    CompletionMessage(
+                        role="assistant", content=msg.content, stop_reason="end_of_turn"
+                    )
+                )
+
+        # Add the current query as a user message
+        messages.append(UserMessage(role="user", content=self.query))
+
+        return messages
 
 
 class Attachment(BaseModel):
